@@ -153,8 +153,7 @@ jobs:
   compose-smoke:
     name: Compose stack smoke test
     # Boots the real stack (Postgres, Redis, API, Celery worker, dashboard) and scans through it.
-    # Skipped on pull requests to keep them fast; runs on main, on demand and weekly.
-    if: github.event_name != 'pull_request'
+    # It is the only end-to-end check of the Compose deliverable, so it runs on pull requests too.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -164,7 +163,17 @@ jobs:
           sh scripts/init-env.sh
           docker compose up -d --build --wait --wait-timeout 600
       - name: Scan through the queue and read the result back
-        run: python3 scripts/smoke_compose.py --key "$(grep '^LLMSCAN_API_KEY=' .env | cut -d= -f2)" --expect-queue celery
+        run: |
+          set -o pipefail
+          python3 scripts/smoke_compose.py --key "$(grep '^LLMSCAN_API_KEY=' .env | cut -d= -f2)" --expect-queue celery 2>&1 | tee smoke.log
+      - name: Failure details as annotations (readable without downloading logs)
+        if: failure()
+        run: |
+          { echo "smoke script:"; tail -n 8 smoke.log 2>/dev/null; docker compose ps --format '{{.Service}}: {{.Status}}'; } \
+            | sed 's/^/::error::/' | head -n 9
+          for svc in api worker; do
+            docker compose logs --no-color --tail=6 "$svc" 2>&1 | sed "s/^/::warning::[$svc] /" | head -n 8
+          done
       - name: Logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=200
