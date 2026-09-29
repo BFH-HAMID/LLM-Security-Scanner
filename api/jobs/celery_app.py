@@ -36,5 +36,5 @@ def _get_store():
 
 @celery_app.task(name="llmscan.execute_run")
 def execute_run_task(run_id: str) -> str:
-    execute_run(_get_store(), run_id)
+    execute_run(_get_store(), run_id, env=settings.allowed_env())
     return run_id

@@ -1,0 +1,20 @@
+# The demo app's agent surface: it can call tools (delete_file, send_email, ...). Setting
+# `tool_calls_path` is what lets the excessive-agency probes SEE those calls.
+#
+#   llmscan demo-target --port 9000
+#   llmscan run examples/demo-agent-http.yaml -c excessive_agency -c indirect_injection
+target:
+  type: http
+  name: demo-agent-over-http
+  url: ${DEMO_URL:-http://localhost:9000}/medium/agent/chat
+  body:
+    message: "{{prompt}}"
+    conversation_id: "{{conversation_id}}"
+  response_path: $.reply
+  tool_calls_path: $.tool_calls
+  canaries:
+    system: CANARY-7f3a9c1e-ACME
+    rag: RAGCANARY-51b2e7d0
+scan:
+  seed: 1
+  categories: [excessive_agency, indirect_injection]

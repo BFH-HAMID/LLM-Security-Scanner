@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class _Cfg(BaseModel):
@@ -131,6 +131,22 @@ class DemoTarget(TargetBase):
     type: Literal["demo"]
     level: Literal["weak", "medium", "hardened"] = "weak"
     surface: Literal["chat", "rag", "agent"] = "chat"
+
+    @model_validator(mode="after")
+    def _complete_the_config(self) -> DemoTarget:
+        """A bare ``{type: demo}`` must be a *complete* config.
+
+        Without the planted canaries and PII most detectors cannot fire, so a config that merely omitted
+        them would silently under-report. Anything the user set explicitly is kept.
+        """
+        from targets.vulnerable_app.data import demo_scan_context
+
+        for field, value in demo_scan_context().items():
+            if field not in self.model_fields_set:
+                setattr(self, field, value)
+        if "name" not in self.model_fields_set:
+            self.name = f"demo-{self.surface}-{self.level}"
+        return self
 
 
 TargetConfig = Annotated[

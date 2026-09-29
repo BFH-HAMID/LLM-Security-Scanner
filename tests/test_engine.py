@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -413,3 +414,24 @@ async def test_raw_model_endpoint_with_scanner_planted_canary():
 
 def test_score_recomputes_from_results(weak_report):
     assert score(weak_report.results).model_dump() == weak_report.score.model_dump()
+
+
+def test_reports_never_contain_absolute_paths(weak_report):
+    """Reports are shared; they must not leak (or depend on) the machine that produced them."""
+    files = {r.source_file for r in weak_report.results}
+    assert all(f and not f.startswith("/") and ".." not in f for f in files)
+    assert "probes/prompt_injection/pi-001-instruction-override.yaml" in files
+    checkout = str(Path(__file__).resolve().parents[1])
+    assert checkout not in weak_report.model_dump_json()
+
+
+def test_portable_path_rules(tmp_path, monkeypatch):
+    from scanner.probes import portable_path
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "custom").mkdir()
+    (tmp_path / "custom" / "x.yaml").write_text("id: X")
+    assert portable_path("custom/x.yaml") == "custom/x.yaml"
+    assert portable_path(str(tmp_path / "custom" / "x.yaml")) == "custom/x.yaml"
+    assert portable_path("/etc/elsewhere/y.yaml") == "y.yaml"
+    assert portable_path(None) is None

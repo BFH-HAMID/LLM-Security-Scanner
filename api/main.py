@@ -75,7 +75,7 @@ def create_app(
             queue = CeleryQueue()
         else:
             store.fail_orphaned_runs()
-            queue = InProcessQueue(store, settings.workers)
+            queue = InProcessQueue(store, settings.workers, env=settings.allowed_env())
     app.state.queue = queue
 
     if settings.cors_origins:

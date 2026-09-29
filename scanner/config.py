@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -100,6 +101,17 @@ class LoadedConfig:
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
+def find_env_refs(obj: Any) -> set[str]:
+    """Names of every ``${NAME}`` / ``${NAME:-default}`` reference found in the strings of ``obj``."""
+    if isinstance(obj, str):
+        return {m.group(1) for m in _ENV.finditer(obj)}
+    if isinstance(obj, dict):
+        return set().union(*(find_env_refs(v) for v in obj.values())) if obj else set()
+    if isinstance(obj, list):
+        return set().union(*(find_env_refs(v) for v in obj)) if obj else set()
+    return set()
+
+
 def interpolate_env(obj: Any, env: dict[str, str] | None = None) -> Any:
     """Replace ``${VAR}`` / ``${VAR:-default}`` in every string. Missing variables raise."""
     env = os.environ if env is None else env  # type: ignore[assignment]
@@ -132,25 +144,20 @@ def demo_target(spec: str) -> dict[str, Any]:
             f"bad demo target {spec!r}; use demo[:weak|medium|hardened][:chat|rag|agent]"
         )
     level, surface = m.group(1) or "weak", m.group(2) or "chat"
-    from targets.vulnerable_app import data
-
-    return {
-        "type": "demo",
-        "name": f"demo-{surface}-{level}",
-        "level": level,
-        "surface": surface,
-        "canaries": {"system": data.CANARY, "rag": data.RAG_CANARY},
-        "system_prompt_fragments": data.SYSTEM_PROMPT_FRAGMENTS,
-        "known_sensitive": [v for c in data.CUSTOMERS for v in (c["email"], c["ssn"], c["card"])]
-        + ["BLUE HARBOR", "AKIAIOSFODNN7EXAMPLE"],
-    }
+    # canaries, prompt fragments and known-sensitive values are filled in by DemoTarget itself
+    return {"type": "demo", "level": level, "surface": surface}
 
 
 MODEL_SHORTHAND = re.compile(r"^(ollama|openai|anthropic):(?P<model>[^@\s]+)(?:@(?P<url>\S+))?$")
 
 
-def model_target(spec: str) -> dict[str, Any]:
-    """``ollama:llama3.1`` / ``openai:gpt-4o-mini[@http://host/v1]`` / ``anthropic:MODEL`` -> config."""
+def model_target(spec: str, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """``ollama:llama3.1`` / ``openai:gpt-4o-mini[@http://host/v1]`` / ``anthropic:MODEL`` -> config.
+
+    Provider keys come from ``env`` (default: the process environment). The API passes a restricted
+    mapping so a caller-chosen ``@URL`` can never receive the server's keys.
+    """
+    env = os.environ if env is None else env
     m = MODEL_SHORTHAND.match(spec)
     if not m:
         raise ConfigError(
@@ -162,7 +169,7 @@ def model_target(spec: str) -> dict[str, Any]:
         cfg["base_url"] = url
     if kind in ("openai", "anthropic"):
         var = "OPENAI_API_KEY" if kind == "openai" else "ANTHROPIC_API_KEY"
-        key = os.environ.get(var)
+        key = env.get(var)
         if key:
             cfg["api_key"] = key
         elif not url:
@@ -170,13 +177,15 @@ def model_target(spec: str) -> dict[str, Any]:
     return cfg
 
 
-def resolve_target_spec(spec: str | dict[str, Any]) -> dict[str, Any]:
+def resolve_target_spec(
+    spec: str | dict[str, Any], env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     """Accept a mapping, a ``demo:`` shorthand or a ``provider:model`` shorthand."""
     if isinstance(spec, dict):
         return spec
     if spec.startswith("demo"):
         return demo_target(spec)
-    return model_target(spec)
+    return model_target(spec, env)
 
 
 def looks_like_shorthand(spec: str) -> bool:

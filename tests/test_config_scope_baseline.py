@@ -268,3 +268,38 @@ def test_baseline_check_on_real_runs():
         check_baseline(run_demo("demo:hardened"), base).ok
         and check_baseline(run_demo("demo:hardened"), base).improvements > 5
     )
+
+
+def test_a_bare_demo_target_is_a_complete_config():
+    """{type: demo} must carry the planted canaries; otherwise detection would silently under-report."""
+    from scanner.connectors.configs import parse_target
+
+    t = parse_target({"type": "demo", "level": "medium", "surface": "rag"})
+    assert t.name == "demo-rag-medium"
+    assert t.canaries["system"].startswith("CANARY-") and "rag" in t.canaries
+    assert t.system_prompt_fragments and any("@" in v for v in t.known_sensitive)
+    # anything the user sets explicitly is respected
+    custom = parse_target(
+        {"type": "demo", "name": "mine", "canaries": {"x": "X-1"}, "known_sensitive": []}
+    )
+    assert (
+        custom.name == "mine" and custom.canaries == {"x": "X-1"} and custom.known_sensitive == []
+    )
+    assert custom.system_prompt_fragments  # ...but unspecified fields are still completed
+
+
+def test_shorthand_and_explicit_demo_configs_agree():
+    from scanner.config import demo_target
+    from scanner.connectors.configs import parse_target
+
+    a = parse_target(demo_target("demo:hardened:agent"))
+    b = parse_target({"type": "demo", "level": "hardened", "surface": "agent"})
+    assert a.model_dump() == b.model_dump()
+
+
+def test_comparison_lists_categories_in_the_canonical_order(weak_report, hardened_report):
+    from scanner.compare import compare_reports
+    from scanner.models import Category
+
+    c = compare_reports(weak_report, hardened_report)
+    assert [d.category for d in c.categories] == [x.value for x in Category]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,8 @@ class ScanRequest:
     judge_transport: httpx.AsyncBaseTransport | None = None
     on_result: ResultCallback | None = None
     should_cancel: CancelCheck | None = None
+    # Environment used to resolve provider shorthands such as ``openai:MODEL`` (default: process env).
+    env: Mapping[str, str] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -64,7 +66,9 @@ def count_attempts(probes: list[Probe], scan: ScanConfig) -> int:
 
 
 def build_judge(
-    scan: ScanConfig, transport: httpx.AsyncBaseTransport | None
+    scan: ScanConfig,
+    transport: httpx.AsyncBaseTransport | None,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[Judge | None, bool, Connector | None]:
     cfg = scan.judge
     if cfg.mode == "off":
@@ -74,13 +78,18 @@ def build_judge(
     if cfg.target is None:
         raise ValueError("judge.mode is 'llm' but judge.target is not set (e.g. ollama:llama3.1)")
     connector = build_connector(
-        parse_target(resolve_target_spec(cfg.target)), transport=transport, concurrency=2, retries=2
+        parse_target(resolve_target_spec(cfg.target, env)),
+        transport=transport,
+        concurrency=2,
+        retries=2,
     )
     return LLMJudge(connector, votes=cfg.votes, max_chars=cfg.max_chars), True, connector
 
 
 def build_attacker_factory(
-    scan: ScanConfig, transport: httpx.AsyncBaseTransport | None
+    scan: ScanConfig,
+    transport: httpx.AsyncBaseTransport | None,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[Callable[[str], Attacker] | None, Connector | None]:
     cfg = scan.attacker
     if cfg.mode == "heuristic" or (cfg.mode == "auto" and cfg.target is None):
@@ -88,7 +97,10 @@ def build_attacker_factory(
     if cfg.target is None:
         raise ValueError("attacker.mode is 'llm' but attacker.target is not set")
     connector = build_connector(
-        parse_target(resolve_target_spec(cfg.target)), transport=transport, concurrency=1, retries=2
+        parse_target(resolve_target_spec(cfg.target, env)),
+        transport=transport,
+        concurrency=1,
+        retries=2,
     )
     return (lambda strategy: LLMAttacker(connector, strategy)), connector
 
@@ -112,8 +124,8 @@ async def run_scan(req: ScanRequest) -> RunReport:
         concurrency=scan.concurrency,
         retries=scan.retries,
     )
-    judge, judge_enabled, judge_conn = build_judge(scan, req.judge_transport)
-    attacker_factory, attacker_conn = build_attacker_factory(scan, req.judge_transport)
+    judge, judge_enabled, judge_conn = build_judge(scan, req.judge_transport, req.env)
+    attacker_factory, attacker_conn = build_attacker_factory(scan, req.judge_transport, req.env)
     mutators = resolve_mutators(scan.mutators)
     scanner = Scanner(
         connector,

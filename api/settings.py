@@ -25,6 +25,9 @@ class Settings:
     allow_demo_target: bool = True
     target_allowlist: list[str] = field(default_factory=list)  # fnmatch host patterns; empty = any
     block_private_targets: bool = False  # for hosted deployments (SSRF hardening)
+    # Environment variables a stored target config may reference as ${NAME}. Empty = none: otherwise
+    # any API user could aim a target at their own server and have the worker send them the secret.
+    env_allowlist: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -52,4 +55,13 @@ class Settings:
                 if h.strip()
             ],
             block_private_targets=_bool("LLMSCAN_BLOCK_PRIVATE_TARGETS"),
+            env_allowlist=[
+                n.strip()
+                for n in os.environ.get("LLMSCAN_ENV_ALLOWLIST", "").split(",")
+                if n.strip()
+            ],
         )
+
+    def allowed_env(self) -> dict[str, str]:
+        """The only environment variables a worker may expand into a stored config."""
+        return {n: os.environ[n] for n in self.env_allowlist if n in os.environ}

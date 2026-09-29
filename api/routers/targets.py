@@ -11,6 +11,7 @@ from api.deps import Principal, get_principal, get_settings, get_store
 from api.masking import mask_config, merge_masked
 from api.schemas import BaselineSet, TargetIn, TargetOut, TargetUpdate
 from api.settings import Settings
+from scanner.config import find_env_refs
 from scanner.connectors.configs import parse_target
 from scanner.scope import classify_host, target_url
 from scanner.storage import Store
@@ -19,11 +20,30 @@ from scanner.storage.models import TargetRow
 router = APIRouter(tags=["targets"])
 
 
+def check_env_refs(config: Any, settings: Settings) -> None:
+    """Refuse ``${VAR}`` references the operator has not allowlisted (secret-exfiltration guard).
+
+    The worker expands references from *its own* environment, so an unrestricted reference plus an
+    attacker-chosen ``base_url`` would send the server's secrets to the attacker.
+    """
+    refused = sorted(find_env_refs(config) - set(settings.env_allowlist))
+    if refused:
+        raise HTTPException(
+            422,
+            "environment references are not allowed over the API: "
+            + ", ".join("${" + n + "}" for n in refused)
+            + ". Send the value itself (it is stored server-side and masked), or ask the operator "
+            "to list the variable in LLMSCAN_ENV_ALLOWLIST.",
+        )
+
+
 def validate_target_config(config: dict[str, Any], settings: Settings) -> str:
     """Validate a target config and apply server policy. Returns the target type.
 
-    ``${ENV}`` references are resolved later, on the worker, so they are only checked structurally.
+    Allowlisted ``${ENV}`` references are expanded later, on the worker, so they are only checked
+    structurally here.
     """
+    check_env_refs(config, settings)
     try:
         cfg = parse_target(_strip_env_refs(config))
     except (ValidationError, ValueError) as exc:

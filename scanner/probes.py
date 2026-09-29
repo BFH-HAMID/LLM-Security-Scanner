@@ -471,6 +471,26 @@ class ProbeLoadError(Exception):
         super().__init__(f"{len(errors)} probe file(s) failed validation:\n{lines}")
 
 
+def portable_path(path: str | None) -> str | None:
+    """A source path fit for reports: never an absolute home directory of whoever ran the scan.
+
+    Built-in probes read ``probes/<category>/<file>`` wherever the library is installed; other files
+    are shown relative to the working directory, or by name alone.
+    """
+    if not path:
+        return None
+    p = Path(path).resolve()
+    builtin = default_probes_dir().resolve()
+    try:
+        return "probes/" + p.relative_to(builtin).as_posix()
+    except ValueError:
+        pass
+    try:
+        return p.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return p.name
+
+
 def default_probes_dir() -> Path:
     """Locate the built-in probe library.
 

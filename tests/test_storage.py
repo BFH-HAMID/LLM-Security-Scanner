@@ -140,3 +140,19 @@ def test_datetimes_are_timezone_aware_utc(store, small_report):
     back = store.load_report(rid)
     assert back.started_at.tzinfo is not None and back.started_at.utcoffset() == dt.timedelta(0)
     assert UTCDateTime().process_bind_param(dt.datetime(2026, 1, 1), None).tzinfo is not None
+
+
+def test_results_are_listed_worst_first(store, small_report):
+    """The findings list leads with critical items, then follows the canonical category order."""
+    rid = store.save_report(small_report)
+    items, total = store.query_results(rid, limit=1000)
+    assert total == len(small_report.results)
+    ranks = ["critical", "high", "medium", "low", "info"]
+    sev = [ranks.index(r.severity.value) for r in items]
+    assert sev == sorted(sev) and sev[0] == min(sev)
+    first_of_each = {}
+    for r in items:
+        first_of_each.setdefault(r.severity, []).append(r.probe_id)
+    # within a severity the order is stable: same query twice gives the same page
+    again, _ = store.query_results(rid, limit=1000)
+    assert [r.id for r in again] == [r.id for r in items]

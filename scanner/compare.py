@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, computed_field
 
-from scanner.models import AttemptResult, RunReport, Severity, Status
+from scanner.models import AttemptResult, Category, RunReport, Severity, Status
 
 FAIL_THRESHOLD = (
     0.5  # an (probe, mutator) key "fails" if at least half of its conclusive attempts failed
@@ -140,7 +140,10 @@ def compare_reports(a: RunReport, b: RunReport, threshold: float = FAIL_THRESHOL
     fixed.sort(key=rank)
     still.sort(key=rank)
     cats = []
-    for cat in sorted(set(a.score.categories) | set(b.score.categories)):
+    canonical = {c.value: i for i, c in enumerate(Category)}
+    for cat in sorted(
+        set(a.score.categories) | set(b.score.categories), key=lambda c: (canonical.get(c, 99), c)
+    ):
         ca, cb = a.score.categories.get(cat), b.score.categories.get(cat)
         cats.append(
             CategoryDelta(

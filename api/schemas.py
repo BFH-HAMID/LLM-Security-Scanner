@@ -68,7 +68,8 @@ class RunDetail(RunOut):
     score: dict[str, Any] | None = None
     notes: list[str] = Field(default_factory=list)
     authorization: dict[str, Any] | None = None
-    scan: dict[str, Any] = Field(default_factory=dict)
+    scan: dict[str, Any] = Field(default_factory=dict)  # as requested (never changes)
+    summary: dict[str, Any] = Field(default_factory=dict)  # facts recorded when the run finished
 
 
 class RunList(BaseModel):

@@ -110,7 +110,13 @@ def test_ci_workflow_shape():
 
 def test_files_referenced_by_ci_exist():
     text = (ROOT / ".github/workflows/ci.yml").read_text()
-    for path in re.findall(r"file: (\S+)", text) + re.findall(r"cp (\S+) \.env", text):
+    referenced = (
+        re.findall(r"file: (\S+)", text)
+        + re.findall(r"sh (\S+\.sh)", text)
+        + re.findall(r"python3 (\S+\.py)", text)
+    )
+    assert referenced, "the docker jobs should reference the files they need"
+    for path in referenced:
         assert (ROOT / path).exists(), path
     assert (ROOT / "dashboard" / "package-lock.json").exists()
     scripts = json.loads((ROOT / "dashboard" / "package.json").read_text())["scripts"]

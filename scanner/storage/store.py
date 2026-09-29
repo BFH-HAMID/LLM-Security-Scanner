@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
-from sqlalchemy import create_engine, delete, func, select, update
+from sqlalchemy import case, create_engine, delete, func, select, update
 from sqlalchemy.engine import CursorResult, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -345,7 +345,8 @@ class Store:
                     error=report.error,
                     authorization=report.authorization,
                     target_summary=report.target,
-                    scan_config=report.config,
+                    summary=report.config,
+                    notes=report.notes,
                     started_at=report.started_at,
                     finished_at=report.finished_at or utcnow(),
                 )
@@ -368,7 +369,12 @@ class Store:
             )
 
     def save_report(
-        self, report: RunReport, *, project_id: str | None = None, target_id: str | None = None
+        self,
+        report: RunReport,
+        *,
+        project_id: str | None = None,
+        target_id: str | None = None,
+        scan_config: dict[str, Any] | None = None,
     ) -> str:
         """Store a finished report (used by ``llmscan run --db``). Returns the run id."""
         pid = project_id or self.ensure_project().id
@@ -379,7 +385,7 @@ class Store:
                 target_id=target_id,
                 name=report.name,
                 status=report.status,
-                scan_config=report.config,
+                scan_config=scan_config or {},
                 target_summary=report.target,
                 authorization=report.authorization,
                 tool_version=report.tool.version,
@@ -413,9 +419,22 @@ class Store:
                 if value:
                     q = q.where(column == value)
             total = s.scalar(select(func.count()).select_from(q.subquery())) or 0
+            # Worst first: severity, then the canonical category order, then a stable probe order.
+            severity_rank = case(
+                {sev: i for i, sev in enumerate(("critical", "high", "medium", "low", "info"))},
+                value=ResultRow.severity,
+                else_=9,
+            )
+            category_rank = case(
+                {c: i for i, c in enumerate(_category_order())}, value=ResultRow.category, else_=99
+            )
             rows = s.scalars(
                 q.order_by(
-                    ResultRow.category, ResultRow.probe_id, ResultRow.mutator, ResultRow.repeat
+                    severity_rank,
+                    category_rank,
+                    ResultRow.probe_id,
+                    ResultRow.mutator,
+                    ResultRow.repeat,
                 )
                 .limit(limit)
                 .offset(offset)
@@ -447,7 +466,8 @@ class Store:
                 name=run.name,
                 status=run.status,
                 target=run.target_summary or {},
-                config=run.scan_config or {},
+                config=run.summary or run.scan_config or {},
+                notes=list(run.notes or []),
                 authorization=run.authorization,
                 started_at=run.started_at or run.created_at,
                 finished_at=run.finished_at,

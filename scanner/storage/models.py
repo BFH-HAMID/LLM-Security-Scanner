@@ -85,7 +85,12 @@ class RunRow(Base):
     )
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    # The scan settings as requested. Immutable: the worker re-reads it, so it is never overwritten.
     scan_config: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    # Facts derived while running (probe count, canary names, config file, command line ...).
+    summary: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    # Coverage warnings ("no tool call observed", "judge abstained ...") - part of the honest result.
+    notes: Mapped[list[str]] = mapped_column(JSONType, default=list)
     target_summary: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     # Snapshot of the target config the worker executes. Internal: never exposed by the API.
     target_config: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)

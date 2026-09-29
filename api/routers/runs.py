@@ -10,12 +10,12 @@ from pydantic import ValidationError
 from api.deps import Principal, get_principal, get_settings, get_store
 from api.masking import mask_config
 from api.routers.system import probe_library
-from api.routers.targets import _strip_env_refs, check_host_policy
+from api.routers.targets import _strip_env_refs, check_env_refs, check_host_policy
 from api.schemas import Progress, RunCreate, RunDetail, RunList, RunOut
 from api.settings import Settings
 from scanner.baseline import check_baseline, make_baseline
 from scanner.compare import compare_reports
-from scanner.config import AuthorizationConfig, ScanConfig
+from scanner.config import AuthorizationConfig, ConfigError, ScanConfig, resolve_target_spec
 from scanner.connectors.configs import parse_target
 from scanner.models import Status
 from scanner.mutators import UnknownMutatorError
@@ -58,6 +58,21 @@ def run_out(row: RunRow) -> RunOut:
     )
 
 
+def check_nested_target(spec: Any, settings: Settings) -> None:
+    """A judge / attacker model: same rules as a target (env refs, host policy), string shorthands too.
+
+    Shorthands are resolved against the *restricted* environment, so ``openai:MODEL@https://evil/v1``
+    cannot pick up the server's OPENAI_API_KEY, and the resolved URL is checked like any other.
+    """
+    if isinstance(spec, dict):
+        check_env_refs(spec, settings)
+    try:
+        cfg = parse_target(_strip_env_refs(resolve_target_spec(spec, settings.allowed_env())))
+    except (ConfigError, ValidationError, ValueError) as exc:
+        raise HTTPException(422, f"invalid judge/attacker target: {exc}") from None
+    check_host_policy(cfg, settings)
+
+
 def planned_attempts(scan: ScanConfig) -> int:
     return count_attempts(select_probes(probe_library(), scan.selection()), scan)
 
@@ -81,6 +96,7 @@ def create_run(
         target_config = row.config
     else:
         target_config = body.target or {}
+    check_env_refs(target_config, settings)
     try:
         target = parse_target(_strip_env_refs(target_config))
     except (ValidationError, ValueError) as exc:
@@ -103,8 +119,8 @@ def create_run(
     except ValidationError as exc:
         raise HTTPException(422, f"invalid scan config: {exc.errors(include_url=False)}") from None
     for nested in (scan.judge.target, scan.attacker.target):
-        if isinstance(nested, dict):
-            check_host_policy(parse_target(_strip_env_refs(nested)), settings)
+        if nested is not None:
+            check_nested_target(nested, settings)
     scan = scan.model_copy(update={"concurrency": min(scan.concurrency, settings.max_concurrency)})
     try:
         attempts = planned_attempts(scan)
@@ -141,21 +157,17 @@ def create_run(
         progress_total=attempts,
     )
     request.app.state.queue.enqueue(run.id)
-    return run_detail(store, run)
+    return run_detail(run)
 
 
-def run_detail(store: Store, row: RunRow) -> RunDetail:
-    notes: list[str] = []
-    if row.status in ("completed", "cancelled", "failed") and row.score is not None:
-        report = store.load_report(row.id)
-        notes = report.notes if report else []
-    base = run_out(row).model_dump()
+def run_detail(row: RunRow) -> RunDetail:
     return RunDetail(
-        **base,
+        **run_out(row).model_dump(),
         score=row.score,
-        notes=notes,
+        notes=list(row.notes or []),
         authorization=row.authorization,
         scan=mask_config(row.scan_config or {}),
+        summary=mask_config(row.summary or {}),
     )
 
 
@@ -185,7 +197,7 @@ def _get_run(store: Store, principal: Principal, run_id: str) -> RunRow:
 def get_run(
     run_id: str, principal: Principal = Depends(get_principal), store: Store = Depends(get_store)
 ) -> RunDetail:
-    return run_detail(store, _get_run(store, principal, run_id))
+    return run_detail(_get_run(store, principal, run_id))
 
 
 @router.post("/runs/{run_id}/cancel", response_model=RunOut)
@@ -296,7 +308,6 @@ def heatmap(
         "rows": [
             {
                 "probe_id": r.probe_id,
-                "name": r.name if hasattr(r, "name") else r.probe_id,
                 "probe_name": r.name,
                 "category": r.category,
                 "severity": r.severity,
@@ -351,7 +362,8 @@ def baseline_check(
     current = store.load_report(run_id, principal.project_id)
     if base is None or current is None:
         raise HTTPException(404, "baseline or run report is missing")
-    return check_baseline(current, make_baseline(base), tolerance=tolerance).model_dump(mode="json")
+    check = check_baseline(current, make_baseline(base), tolerance=tolerance)
+    return {**check.model_dump(mode="json"), "message": check.summary()}
 
 
 @router.get("/compare")

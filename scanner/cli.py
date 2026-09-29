@@ -445,7 +445,7 @@ def run(
         from scanner.storage import open_store
 
         store = open_store(db)
-        store.save_report(report)
+        store.save_report(report, scan_config=scan.model_dump(mode="json"))
         if not quiet:
             console.print(f"Stored run [bold]{report.id}[/] in {db}")
 

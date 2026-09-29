@@ -27,7 +27,7 @@ from scanner.models import (
     utcnow,
 )
 from scanner.mutators import Mutator
-from scanner.probes import AttackPlan, Probe
+from scanner.probes import AttackPlan, Probe, portable_path
 from scanner.scoring import score
 from scanner.taxonomy import CATEGORIES
 from scanner.templating import make_variables, render
@@ -397,7 +397,7 @@ class Scanner:
             latency_ms=round(convo.latency_ms, 1) if convo else 0.0,
             error=error,
             started_at=started,
-            source_file=p.source_file,
+            source_file=portable_path(p.source_file),
             meta=meta or {},
         )
 

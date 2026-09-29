@@ -209,9 +209,11 @@ async def test_target_validation(client):
         "url": "http://localhost:1/x",
         "auth": {"type": "bearer", "token": "${MY_TOKEN}"},
     }
+    # ${VAR} would be expanded from the worker's environment: refused unless allowlisted
+    # (see test_api_secrets.py for the policy and its tests)
     assert (
         await client.post(f"{P}/targets", json={"name": "env", "config": env_ref})
-    ).status_code == 201  # resolved on the worker
+    ).status_code == 422
 
 
 async def test_server_side_target_policy(tmp_path):
@@ -270,8 +272,13 @@ async def test_full_run_lifecycle(client):
         and created["progress"]["total"] == 60
         and created["name"] == "nightly"
     )
+    assert created["scan"]["mutators"] == ["base64"] and created["scan"]["seed"] == 1
     done = await wait_done(client, created["id"])
     assert done["status"] == "completed" and done["error"] is None
+    # what was requested never changes; what was learned while running is kept separately
+    assert done["scan"] == created["scan"]
+    assert done["summary"]["probes"] == 30 and done["summary"]["mutators"] == ["base64"]
+    assert done["target"]["type"] == "demo" and created["target"]["type"] == "demo"
     assert done["progress"] == {"done": 60, "total": 60}
     assert done["grade"] in "ABCDF" and done["risk_score"] > 0 and done["findings"] > 0
     assert done["score"]["total"] == 60 and set(done["score"]["categories"]) <= {
@@ -486,6 +493,32 @@ async def test_cancel_a_running_run_keeps_partial_results(tmp_path):
         assert (await c.get(f"{P}/runs/{rid}/results?limit=1")).json()["total"] == final[
             "progress"
         ]["done"]  # partial results kept
+
+
+async def test_a_minimal_demo_target_config_still_detects_leaks(client):
+    """The dashboard sends {type: demo, level, surface}; it must find exactly what the CLI shorthand finds."""
+    from scanner.models import Category
+    from tests.conftest import run_demo
+
+    cats = [Category.SENSITIVE_DATA_LEAKAGE, Category.SYSTEM_PROMPT_EXTRACTION]
+    expected = await asyncio.to_thread(run_demo, "demo:weak", categories=cats)
+    tid = await new_target(
+        client, {"type": "demo", "level": "weak", "surface": "chat"}, "bare demo"
+    )
+    run = await run_and_wait(client, tid, {"categories": [c.value for c in cats], "seed": 1})
+    assert expected.score.failed >= 10
+    assert (
+        run["findings"] == expected.score.failed and run["risk_score"] == expected.score.risk_score
+    )
+
+
+async def test_coverage_notes_survive_the_database(client):
+    """'No tool call observed' style warnings are part of an honest result; they must not be lost."""
+    tid = await new_target(client, {**DEMO, "level": "hardened"}, "hardened chat")
+    run = await run_and_wait(client, tid, {"categories": ["excessive_agency"]})
+    assert any("No tool call was observed" in n for n in run["notes"]), run["notes"]
+    report = json.loads((await client.get(f"{P}/runs/{run['id']}/report?format=json")).content)
+    assert report["notes"] == run["notes"] and report["config"]["probes"] == 12
 
 
 async def test_a_failing_target_marks_the_run_failed(client):

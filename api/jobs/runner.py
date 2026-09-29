@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import httpx
 
@@ -23,7 +25,15 @@ async def execute_run_async(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     judge_transport: httpx.AsyncBaseTransport | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> None:
+    """Run one stored run.
+
+    ``env`` is the *only* environment the run can see: ``${NAME}`` references in the stored target
+    config and ``openai:MODEL`` style provider shorthands resolve against it, never against the
+    worker's own environment. It defaults to empty, so an unconfigured worker leaks nothing.
+    """
+    env = {} if env is None else env
     run = store.get_run(None, run_id)
     if run is None or run.status in ("cancelled", "completed"):
         return
@@ -32,7 +42,7 @@ async def execute_run_async(
         return
     store.mark_running(run_id)
     try:
-        target = parse_target(interpolate_env(run.target_config or {}))
+        target = parse_target(interpolate_env(run.target_config or {}, dict(env)))
         scan = ScanConfig.model_validate(run.scan_config)
         findings = 0
 
@@ -52,6 +62,7 @@ async def execute_run_async(
                 acknowledged_flag=bool((run.authorization or {}).get("acknowledged")),
                 transport=transport,
                 judge_transport=judge_transport,
+                env=env,
                 on_result=on_result,
                 should_cancel=cancelled,
             )
@@ -65,7 +76,7 @@ async def execute_run_async(
         store.fail_run(run_id, f"{type(exc).__name__}: {exc}")
 
 
-def execute_run(store: Store, run_id: str, **kwargs) -> None:
+def execute_run(store: Store, run_id: str, **kwargs: Any) -> None:
     asyncio.run(execute_run_async(store, run_id, **kwargs))
 
 
@@ -74,14 +85,15 @@ class InProcessQueue:
 
     name = "inprocess"
 
-    def __init__(self, store: Store, workers: int = 2):
+    def __init__(self, store: Store, workers: int = 2, env: Mapping[str, str] | None = None):
         self.store = store
+        self.env = dict(env or {})
         self.pool = ThreadPoolExecutor(
             max_workers=max(1, workers), thread_name_prefix="llmscan-job"
         )
 
     def enqueue(self, run_id: str) -> None:
-        self.pool.submit(execute_run, self.store, run_id)
+        self.pool.submit(execute_run, self.store, run_id, env=self.env)
 
     def shutdown(self) -> None:
         self.pool.shutdown(wait=False, cancel_futures=True)
