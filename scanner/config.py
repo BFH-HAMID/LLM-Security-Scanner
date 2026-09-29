@@ -115,9 +115,9 @@ def interpolate_env(obj: Any, env: dict[str, str] | None = None) -> Any:
 
         return _ENV.sub(repl, obj)
     if isinstance(obj, dict):
-        return {k: interpolate_env(v, env) for k, v in obj.items()}  # type: ignore[arg-type]
+        return {k: interpolate_env(v, env) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [interpolate_env(v, env) for v in obj]  # type: ignore[arg-type]
+        return [interpolate_env(v, env) for v in obj]
     return obj
 
 

@@ -1,0 +1,79 @@
+"""Shared fixtures. Everything runs offline against the in-process demo target."""
+
+from __future__ import annotations
+
+import asyncio
+import shutil
+import socket
+from pathlib import Path
+
+import pytest
+
+from scanner.config import load_config
+from scanner.models import RunReport
+from scanner.probes import Probe, load_probes
+from scanner.runner import ScanRequest, run_scan
+
+DATA = Path(__file__).parent / "data"
+
+
+@pytest.fixture(scope="session")
+def probes() -> list[Probe]:
+    return load_probes()
+
+
+def run_demo(spec: str, **scan_overrides) -> RunReport:
+    cfg = load_config(spec)
+    scan = cfg.scan.model_copy(update={"seed": 1, **scan_overrides})
+    return asyncio.run(run_scan(ScanRequest(cfg.target, scan)))
+
+
+@pytest.fixture(scope="session")
+def weak_report() -> RunReport:
+    return run_demo("demo:weak")
+
+
+@pytest.fixture(scope="session")
+def hardened_report() -> RunReport:
+    return run_demo("demo:hardened")
+
+
+@pytest.fixture(scope="session")
+def small_report() -> RunReport:
+    """A fast report with mutators, used by the exporter tests."""
+    return run_demo("demo:medium", mutators=["base64", "roleplay"], max_probes=25)
+
+
+def _port_open(host: str, port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex((host, port)) == 0
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> str:
+    """URL of a Redis server for integration tests (skips when none is available)."""
+    import os
+
+    url = os.environ.get("REDIS_URL")
+    if url:
+        return url
+    exe = shutil.which("redis-server") or os.environ.get("REDIS_SERVER_BIN")
+    if not exe:
+        pytest.skip("no Redis available (set REDIS_URL or install redis-server)")
+    import subprocess
+    import time
+
+    port = 6390
+    proc = subprocess.Popen(
+        [exe, "--port", str(port), "--save", "", "--appendonly", "no"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    for _ in range(50):
+        if _port_open("127.0.0.1", port):
+            break
+        time.sleep(0.1)
+    yield f"redis://127.0.0.1:{port}/0"
+    proc.terminate()
+    proc.wait(timeout=5)

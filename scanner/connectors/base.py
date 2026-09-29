@@ -68,7 +68,7 @@ class Connector(ABC):
         return None
 
     def describe(self) -> dict[str, Any]:
-        return {"kind": self.kind, "name": self.name}
+        return {"type": self.kind, "name": self.name}
 
     async def __aenter__(self) -> Connector:
         return self

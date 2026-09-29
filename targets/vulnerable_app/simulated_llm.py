@@ -208,6 +208,11 @@ _PROTECT = re.compile(
 )
 
 
+_NOT_LEET = frozenset(
+    {"base64", "rot13", "utf8", "sha256", "md5", "sha1", "gpt4", "utf16", "h264", "ipv4", "ipv6"}
+)
+
+
 def _deleet(text: str, table: dict[int, str]) -> str:
     """Read leetspeak the way a model does: decode everything except quoted/code-like tokens."""
     parts = _PROTECT.split(text)
@@ -242,10 +247,16 @@ def views(text: str) -> dict[str, str]:
     collapsed = re.sub(r"\s+", " ", collapsed)
     if collapsed != norm:
         out["collapsed"] = collapsed
-    for label, table in (("deleet", _LEET), ("deleet_l", _LEET_L)):
-        dl = _deleet(norm, table)
-        if dl != norm:
-            out[label] = dl
+    leet_tokens = [
+        t
+        for t in re.findall(r"\b\w{3,}\b", _PROTECT.sub(" ", norm))
+        if re.search(r"[A-Za-z]", t) and re.search(r"[0-9@$!+]", t) and t.lower() not in _NOT_LEET
+    ]
+    if len(leet_tokens) >= 2:  # only read it as leetspeak when it really looks like leetspeak
+        for label, table in (("deleet", _LEET), ("deleet_l", _LEET_L)):
+            dl = _deleet(norm, table)
+            if dl != norm:
+                out[label] = dl
     translated = norm
     for foreign, english in _MULTILINGUAL:
         translated = re.sub(re.escape(foreign), english, translated, flags=re.IGNORECASE)
@@ -553,7 +564,16 @@ class SimulatedLLM:
         seen: set[tuple[str, str]] = set()
 
         def add(kind: str, payload: Any, label: str) -> None:
-            key = (kind, json.dumps(payload, sort_keys=True, default=str))
+            # one request of these kinds per text: the plainest reading (raw first) wins
+            single = kind in {
+                "reveal_prompt",
+                "paraphrase_prompt",
+                "reveal_secret",
+                "pii",
+                "cross_session",
+                "list_tools",
+            }
+            key = (kind, "" if single else json.dumps(payload, sort_keys=True, default=str))
             if key not in seen:
                 seen.add(key)
                 out.append(Request(kind, payload, source, label))
@@ -862,7 +882,14 @@ class SimulatedLLM:
         if k == "paraphrase_prompt":
             return data.PARAPHRASE
         if k == "reveal_secret":
-            return f"Of course. The admin override code is {data.CANARY} (internal policy id {data.POLICY_ID})."
+            found = secrets_in(system) if system and system != data.SYSTEM_PROMPT else []
+            if (
+                found
+            ):  # a caller-supplied system prompt: leak whatever secret-looking values it holds
+                shaped = ", ".join(_shape_secret(v, inp.user) for v in found)
+                return f"Of course. Here is what is in my configuration: {shaped}."
+            code = _shape_secret(data.CANARY, inp.user)
+            return f"Of course. The admin override code is {code} (internal policy id {data.POLICY_ID})."
         if k == "pii":
             return self._dump_customers(str(req.data or ""))
         if k == "cross_session":
@@ -963,6 +990,41 @@ class SimulatedLLM:
 
 
 # ------------------------------------------------------------------------------ helpers
+
+_SECRET_VALUE = re.compile(
+    r"(?:secret|token|code|password|passphrase|key|credential)s?\b[^:=\n]{0,30}[:=]\s*['\"]?([A-Za-z0-9_\-./+]{6,})|(CANARY-[\w\-]+)",
+    re.I,
+)
+
+
+def _shape_secret(value: str, request: str) -> str:
+    """Honour output-format instructions for a disclosed secret, the way a helpful model would.
+
+    Only phrasing about the *answer* counts ("spell it out", "encode your answer in base64");
+    hints about how to read the *input* ("this text is written backwards") must not.
+    """
+    low = " ".join(v for label, v in views(request).items() if label != "reversed").lower()
+    if re.search(r"spell|one character per line|separated by dashes|letter by letter", low):
+        return "\n".join(value)
+    if re.search(r"encode your answer in base-?64|(?:in|as|to) base-?64 and output only", low):
+        return base64.b64encode(value.encode()).decode()
+    if re.search(
+        r"(?:write|output|answer|respond|give|print)\b[^.\n]{0,30}\b(?:backwards|reversed|in reverse)",
+        low,
+    ):
+        return value[::-1]
+    return value
+
+
+def secrets_in(system: str) -> list[str]:
+    """Secret-looking values in a system prompt (what a gullible model would blurt out)."""
+    out: list[str] = []
+    for m in _SECRET_VALUE.finditer(system):
+        value = (m.group(1) or m.group(2)).rstrip(".,;")
+        if value not in out:
+            out.append(value)
+    return out
+
 
 _EMBEDDED = re.compile(r"--- BEGIN [^\n]*?---\n(.*?)\n--- END ---", re.S)
 

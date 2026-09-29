@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import parse_qsl, urlparse
 
 from scanner.detectors.canary import find_canaries
@@ -461,7 +463,7 @@ def _refusal(rule: RefusalRule, ctx: DetectionContext) -> Detection:
     )
 
 
-_HANDLERS = {
+_HANDLERS: dict[str, Callable[[Any, DetectionContext], Detection]] = {
     "contains": _contains,
     "regex": _regex,
     "canary": _canary,

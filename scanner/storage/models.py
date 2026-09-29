@@ -87,6 +87,8 @@ class RunRow(Base):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     scan_config: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     target_summary: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    # Snapshot of the target config the worker executes. Internal: never exposed by the API.
+    target_config: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
     authorization: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
     score: Mapped[dict[str, Any] | None] = mapped_column(JSONType, nullable=True)
     risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)

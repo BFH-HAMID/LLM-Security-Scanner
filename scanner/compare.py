@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from scanner.models import AttemptResult, RunReport, Severity, Status
 
@@ -44,6 +44,7 @@ class CategoryDelta(BaseModel):
     risk_a: float = 0.0
     risk_b: float = 0.0
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def delta(self) -> float:
         return self.asr_b - self.asr_a
@@ -65,10 +66,12 @@ class Comparison(BaseModel):
     new_probes: list[str] = Field(default_factory=list)
     removed_probes: list[str] = Field(default_factory=list)
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def risk_delta(self) -> float:
         return self.risk_b - self.risk_a
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def verdict(self) -> str:
         if self.regressions and not self.fixed:

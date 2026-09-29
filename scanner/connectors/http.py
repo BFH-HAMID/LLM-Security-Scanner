@@ -226,7 +226,7 @@ class HTTPConnector(HTTPConnectorBase):
     def describe(self) -> dict[str, Any]:
         cfg = self.cfg
         return {
-            "kind": "http",
+            "type": "http",
             "name": self.name,
             "url": cfg.url,
             "method": cfg.method,

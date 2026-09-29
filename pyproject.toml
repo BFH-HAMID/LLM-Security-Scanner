@@ -91,7 +91,12 @@ addopts = "-ra --strict-markers"
 markers = [
     "integration: needs external services (Redis / PostgreSQL) — skipped when unavailable",
 ]
-filterwarnings = ["ignore::DeprecationWarning:celery.*", "ignore::DeprecationWarning:kombu.*"]
+filterwarnings = [
+    "ignore::DeprecationWarning:celery.*",
+    "ignore::DeprecationWarning:kombu.*",
+    # Starlette's TestClient nags about httpx; the demo-target tests use it deliberately.
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated:Warning",
+]
 
 [tool.ruff]
 line-length = 100

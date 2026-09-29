@@ -95,7 +95,7 @@ class OpenAIConnector(HTTPConnectorBase):
 
     def describe(self) -> dict[str, Any]:
         return {
-            "kind": "openai",
+            "type": "openai",
             "name": self.name,
             "base_url": self.cfg.base_url,
             "model": self.cfg.model,

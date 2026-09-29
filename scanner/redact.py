@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from scanner.detectors.patterns import PII_PATTERNS, SECRET_PATTERNS
 from scanner.models import AttemptResult, Evidence, Message, RunReport
+
+
+def _masker(kind: str, validator: Callable[[str], bool] | None) -> Callable[[re.Match[str]], str]:
+    """Replacement function: mask a match unless its validator (e.g. Luhn) rejects it."""
+
+    def repl(m: re.Match[str]) -> str:
+        return f"[REDACTED:{kind}]" if (validator is None or validator(m.group(0))) else m.group(0)
+
+    return repl
 
 
 def redact_text(text: str, extra: list[str] | None = None) -> str:
@@ -21,12 +31,7 @@ def redact_text(text: str, extra: list[str] | None = None) -> str:
         text = pat.sub(f"[REDACTED:{kind}]", text)
     for kind in ("ssn", "credit_card", "email", "phone", "iban"):
         pat, validator = PII_PATTERNS[kind]
-        text = pat.sub(
-            lambda m, k=kind, v=validator: (
-                f"[REDACTED:{k}]" if (v is None or v(m.group(0))) else m.group(0)
-            ),
-            text,
-        )
+        text = pat.sub(_masker(kind, validator), text)
     return text
 
 

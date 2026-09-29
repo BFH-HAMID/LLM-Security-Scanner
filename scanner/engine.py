@@ -151,9 +151,9 @@ class Scanner:
                 parts = getattr(m, "parts", [m])
                 if all(probe.allows_mutator(p.name) for p in parts):
                     variants.append(m)
-            for m in variants:
+            for variant in variants:
                 for r in range(self.config.repeats):
-                    items.append(WorkItem(probe, m, r))
+                    items.append(WorkItem(probe, variant, r))
         return items
 
     # ----------------------------------------------------------------------- run
@@ -213,7 +213,7 @@ class Scanner:
             notes=notes,
             id=uuid.uuid4().hex,
             name=self.config.name,
-            status=status,  # type: ignore[arg-type]
+            status=status,
             target=self.connector.describe(),
             config=self._config_summary(),
             authorization=self.config.authorization.model_dump(),

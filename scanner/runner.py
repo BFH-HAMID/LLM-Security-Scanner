@@ -50,6 +50,19 @@ def load_probe_set(scan: ScanConfig) -> list[Probe]:
     return select_probes(load_probes(paths), scan.selection())
 
 
+def count_attempts(probes: list[Probe], scan: ScanConfig) -> int:
+    """How many requests-to-judge a scan will make: probes x (original + applicable mutators) x repeats."""
+    mutators = resolve_mutators(scan.mutators)
+    total = 0
+    for p in probes:
+        n = 1 if scan.include_original else 0
+        n += sum(
+            1 for m in mutators if all(p.allows_mutator(x.name) for x in getattr(m, "parts", [m]))
+        )
+        total += n * scan.repeats
+    return total
+
+
 def build_judge(
     scan: ScanConfig, transport: httpx.AsyncBaseTransport | None
 ) -> tuple[Judge | None, bool, Connector | None]:

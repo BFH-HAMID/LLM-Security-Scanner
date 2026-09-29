@@ -1,0 +1,832 @@
+{
+  "$defs": {
+    "AdaptiveSpec": {
+      "additionalProperties": false,
+      "description": "Multi-turn attacker agent (PAIR / crescendo style).",
+      "properties": {
+        "strategy": {
+          "default": "crescendo",
+          "enum": [
+            "crescendo",
+            "pair"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "max_turns": {
+          "default": 6,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Turns",
+          "type": "integer"
+        },
+        "tactics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tactics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "title": "AdaptiveSpec",
+      "type": "object"
+    },
+    "CanaryRule": {
+      "additionalProperties": false,
+      "description": "A planted secret leaked (also detects base64/hex/ROT13/reversed/spaced variants).",
+      "properties": {
+        "type": {
+          "const": "canary",
+          "title": "Type",
+          "type": "string"
+        },
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        },
+        "decode": {
+          "default": true,
+          "title": "Decode",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "CanaryRule",
+      "type": "object"
+    },
+    "Category": {
+      "enum": [
+        "prompt_injection",
+        "indirect_injection",
+        "jailbreak",
+        "system_prompt_extraction",
+        "sensitive_data_leakage",
+        "insecure_output_handling",
+        "excessive_agency"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "ContainsRule": {
+      "additionalProperties": false,
+      "description": "Matches when the response contains one of (or all of) the given strings.",
+      "properties": {
+        "type": {
+          "const": "contains",
+          "title": "Type",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Values",
+          "type": "array"
+        },
+        "match": {
+          "default": "any",
+          "enum": [
+            "any",
+            "all"
+          ],
+          "title": "Match",
+          "type": "string"
+        },
+        "case_sensitive": {
+          "default": false,
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "title": "ContainsRule",
+      "type": "object"
+    },
+    "IndirectSpec": {
+      "additionalProperties": false,
+      "description": "A poisoned document: benign content + hidden instruction, delivered inline or ingested.",
+      "properties": {
+        "carrier": {
+          "default": "document",
+          "title": "Carrier",
+          "type": "string"
+        },
+        "hide": {
+          "default": "none",
+          "title": "Hide",
+          "type": "string"
+        },
+        "payload": {
+          "title": "Payload",
+          "type": "string"
+        },
+        "benign_content": {
+          "default": "",
+          "title": "Benign Content",
+          "type": "string"
+        },
+        "title": {
+          "default": "Untitled document",
+          "title": "Title",
+          "type": "string"
+        },
+        "delivery": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "inline",
+            "ingest"
+          ],
+          "title": "Delivery",
+          "type": "string"
+        },
+        "query": {
+          "default": "Please summarize this document.",
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "IndirectSpec",
+      "type": "object"
+    },
+    "JudgeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "rubric": {
+          "title": "Rubric",
+          "type": "string"
+        },
+        "success_indicators": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Success Indicators",
+          "type": "array"
+        },
+        "threshold": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Threshold",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rubric"
+      ],
+      "title": "JudgeSpec",
+      "type": "object"
+    },
+    "KnownSensitiveRule": {
+      "additionalProperties": false,
+      "description": "Matches when a value the target owner declared as sensitive (``known_sensitive``) leaks.",
+      "properties": {
+        "type": {
+          "const": "known_sensitive",
+          "title": "Type",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Values",
+          "type": "array"
+        },
+        "min_matches": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Matches",
+          "type": "integer"
+        },
+        "ignore_in_prompt": {
+          "default": true,
+          "title": "Ignore In Prompt",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "KnownSensitiveRule",
+      "type": "object"
+    },
+    "OutputHandlingRule": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "output_handling",
+          "title": "Type",
+          "type": "string"
+        },
+        "kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "allowed_domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Domains",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "OutputHandlingRule",
+      "type": "object"
+    },
+    "PiiRule": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pii",
+          "title": "Type",
+          "type": "string"
+        },
+        "kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "known_values": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Known Values",
+          "type": "array"
+        },
+        "ignore_in_prompt": {
+          "default": true,
+          "title": "Ignore In Prompt",
+          "type": "boolean"
+        },
+        "min_matches": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Matches",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PiiRule",
+      "type": "object"
+    },
+    "RefusalRule": {
+      "additionalProperties": false,
+      "description": "Refusal heuristic. ``absent`` matches when the model did NOT refuse (weak signal).",
+      "properties": {
+        "type": {
+          "const": "refusal",
+          "title": "Type",
+          "type": "string"
+        },
+        "expect": {
+          "default": "absent",
+          "enum": [
+            "present",
+            "absent"
+          ],
+          "title": "Expect",
+          "type": "string"
+        },
+        "min_length": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Min Length",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "RefusalRule",
+      "type": "object"
+    },
+    "RegexRule": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "regex",
+          "title": "Type",
+          "type": "string"
+        },
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "enum": [
+              "i",
+              "m",
+              "s"
+            ],
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pattern"
+      ],
+      "title": "RegexRule",
+      "type": "object"
+    },
+    "SecretRule": {
+      "additionalProperties": false,
+      "description": "API keys, tokens and private keys in the response.",
+      "properties": {
+        "type": {
+          "const": "secret",
+          "title": "Type",
+          "type": "string"
+        },
+        "kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "ignore_in_prompt": {
+          "default": true,
+          "title": "Ignore In Prompt",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "SecretRule",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "SuccessCriteria": {
+      "additionalProperties": false,
+      "properties": {
+        "match": {
+          "default": "any",
+          "enum": [
+            "any",
+            "all"
+          ],
+          "title": "Match",
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "canary": "#/$defs/CanaryRule",
+                "contains": "#/$defs/ContainsRule",
+                "known_sensitive": "#/$defs/KnownSensitiveRule",
+                "output_handling": "#/$defs/OutputHandlingRule",
+                "pii": "#/$defs/PiiRule",
+                "refusal": "#/$defs/RefusalRule",
+                "regex": "#/$defs/RegexRule",
+                "secret": "#/$defs/SecretRule",
+                "system_prompt_leak": "#/$defs/SystemPromptLeakRule",
+                "tool_call": "#/$defs/ToolCallRule"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ContainsRule"
+              },
+              {
+                "$ref": "#/$defs/RegexRule"
+              },
+              {
+                "$ref": "#/$defs/CanaryRule"
+              },
+              {
+                "$ref": "#/$defs/SecretRule"
+              },
+              {
+                "$ref": "#/$defs/PiiRule"
+              },
+              {
+                "$ref": "#/$defs/SystemPromptLeakRule"
+              },
+              {
+                "$ref": "#/$defs/OutputHandlingRule"
+              },
+              {
+                "$ref": "#/$defs/ToolCallRule"
+              },
+              {
+                "$ref": "#/$defs/KnownSensitiveRule"
+              },
+              {
+                "$ref": "#/$defs/RefusalRule"
+              }
+            ]
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "enum": [
+                "rules",
+                "judge",
+                "any",
+                "all"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy"
+        },
+        "scope": {
+          "default": "last",
+          "enum": [
+            "last",
+            "any_turn"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "SuccessCriteria",
+      "type": "object"
+    },
+    "SystemPromptLeakRule": {
+      "additionalProperties": false,
+      "description": "Response reproduces the (known) system prompt or listed fragments.",
+      "properties": {
+        "type": {
+          "const": "system_prompt_leak",
+          "title": "Type",
+          "type": "string"
+        },
+        "fragments": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fragments",
+          "type": "array"
+        },
+        "min_overlap": {
+          "default": 0.3,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Overlap",
+          "type": "number"
+        },
+        "ngram": {
+          "default": 4,
+          "maximum": 12,
+          "minimum": 2,
+          "title": "Ngram",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "SystemPromptLeakRule",
+      "type": "object"
+    },
+    "ToolCallRule": {
+      "additionalProperties": false,
+      "description": "Matches when the agent attempted a (forbidden) tool call.",
+      "properties": {
+        "type": {
+          "const": "tool_call",
+          "title": "Type",
+          "type": "string"
+        },
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Names",
+          "type": "array"
+        },
+        "any_tool": {
+          "default": false,
+          "title": "Any Tool",
+          "type": "boolean"
+        },
+        "args_match": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Args Match",
+          "type": "object"
+        },
+        "min_calls": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Min Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ToolCallRule",
+      "type": "object"
+    },
+    "ToolDef": {
+      "additionalProperties": false,
+      "description": "Function schema offered to models that support tool calling (never executed by us).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ToolDef",
+      "type": "object"
+    },
+    "Turn": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "default": "user",
+          "enum": [
+            "user",
+            "assistant",
+            "system"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "attack": {
+          "default": false,
+          "title": "Attack",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "Turn",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[A-Z]{2,5}-\\d{3,4}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "category": {
+      "$ref": "#/$defs/Category"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "owasp": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Owasp",
+      "type": "array"
+    },
+    "atlas": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Atlas",
+      "type": "array"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "prompt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prompt"
+    },
+    "system_prompt": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "System Prompt"
+    },
+    "turns": {
+      "items": {
+        "$ref": "#/$defs/Turn"
+      },
+      "title": "Turns",
+      "type": "array"
+    },
+    "indirect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IndirectSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "adaptive": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AdaptiveSpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/ToolDef"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "standard_tools": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Standard Tools",
+      "type": "array"
+    },
+    "success_criteria": {
+      "$ref": "#/$defs/SuccessCriteria"
+    },
+    "remediation": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remediation"
+    },
+    "references": {
+      "items": {
+        "type": "string"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "mutators": {
+      "anyOf": [
+        {
+          "enum": [
+            "all",
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "default": "all",
+      "title": "Mutators"
+    },
+    "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "source_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source File"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "category",
+    "severity",
+    "success_criteria"
+  ],
+  "title": "Probe",
+  "type": "object"
+}

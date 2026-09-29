@@ -38,7 +38,8 @@ from scanner.probes import (
     load_probes,
     select_probes,
 )
-from scanner.runner import ScanRequest, ScopeError, load_probe_set, run_scan
+from scanner.runner import ScanRequest, ScopeError, count_attempts, load_probe_set, run_scan
+from scanner.scope import check_scope
 
 app = typer.Typer(
     name="llmscan",
@@ -194,14 +195,17 @@ def run(
     probes_dir: Annotated[
         list[Path] | None, typer.Option("--probes-dir", help="Extra probe files/directories")
     ] = None,
-    no_builtin_probes: Annotated[bool, typer.Option(help="Do not load the bundled probes")] = False,
+    no_builtin_probes: Annotated[
+        bool, typer.Option("--no-builtin-probes", help="Do not load the bundled probes")
+    ] = False,
     max_probes: Annotated[int | None, typer.Option(help="Cap the number of probes")] = None,
     mutator: Annotated[
         list[str] | None,
         typer.Option("--mutator", "-m", help="Mutators to add (name, a+b chain, or 'all')"),
     ] = None,
     no_original: Annotated[
-        bool, typer.Option(help="Only run mutated variants, not the plain probe")
+        bool,
+        typer.Option("--no-original", help="Only run mutated variants, not the plain probe"),
     ] = False,
     repeats: Annotated[
         int | None,
@@ -232,7 +236,9 @@ def run(
             help="Write a report; format from extension (.json .html .pdf .sarif .md). Repeatable",
         ),
     ] = None,
-    no_save: Annotated[bool, typer.Option(help="Do not write default report files")] = False,
+    no_save: Annotated[
+        bool, typer.Option("--no-save", help="Do not write default report files")
+    ] = False,
     db: Annotated[
         str | None,
         typer.Option(help="Also store the run in this database (SQLite path or SQLAlchemy URL)"),
@@ -241,7 +247,10 @@ def run(
         Path | None, typer.Option(help="Compare against this baseline file")
     ] = None,
     fail_on_regression: Annotated[
-        bool, typer.Option(help="Exit 1 if the baseline check finds a regression")
+        bool,
+        typer.Option(
+            "--fail-on-regression", help="Exit 1 if the baseline check finds a regression"
+        ),
     ] = False,
     regression_tolerance: Annotated[
         float, typer.Option(help="Allowed risk-score increase vs baseline")
@@ -253,13 +262,14 @@ def run(
         float | None, typer.Option(help="Exit 1 if the risk score exceeds this")
     ] = None,
     redact: Annotated[
-        bool, typer.Option(help="Mask secrets and PII in stored transcripts")
+        bool, typer.Option("--redact", help="Mask secrets and PII in stored transcripts")
     ] = False,
     authorized: Annotated[
         bool, typer.Option("--i-am-authorized", help="Confirm you own / may test a public target")
     ] = False,
     dry_run: Annotated[
-        bool, typer.Option(help="Show what would run without contacting the target")
+        bool,
+        typer.Option("--dry-run", help="Show what would run without contacting the target"),
     ] = False,
     name: Annotated[str | None, typer.Option(help="Label for this run")] = None,
     quiet: Annotated[
@@ -329,25 +339,18 @@ def run(
         mutators = resolve_mutators(scan.mutators)
     except ValueError as exc:
         raise _fail(str(exc)) from None
-    variants = ([1] if scan.include_original else []) + [1] * len(mutators)
-    attempts = (
-        sum(
-            (1 if scan.include_original else 0)
-            + sum(
-                1
-                for m in mutators
-                if all(p.allows_mutator(x.name) for x in getattr(m, "parts", [m]))
-            )
-            for p in probes
-        )
-        * scan.repeats
-    )
-    _ = variants
+    attempts = count_attempts(probes, scan)
+    decision = check_scope(cfg.target, scan, acknowledged_flag=authorized)
+    if not decision.allowed:  # a dry run validates everything a real run would, except sending
+        raise _fail(decision.message)
+    rps = scan.rps if scan.rps is not None else decision.default_rps
     if not quiet:
         console.print(f"[dim]llmscan {__version__} - authorised testing only (docs/ETHICS.md)[/]")
         console.print(
             f"Target [bold]{cfg.target.name}[/] - {len(probes)} probes, {len(mutators)} mutator(s), {attempts} attempts"
         )
+        console.print(f"[dim]Scope: {decision.message}[/]")
+        console.print(f"[dim]Rate limit: {f'{rps:g} req/s' if rps else 'none'}[/]")
     if dry_run:
         t = Table("Probe", "Category", "Severity", "Kind", "Name", box=None)
         for p in probes:
@@ -490,7 +493,7 @@ def report(
     fmt: Annotated[
         str | None, typer.Option("--format", "-f", help="json | html | pdf | sarif | md")
     ] = None,
-    redact: Annotated[bool, typer.Option(help="Mask secrets and PII")] = False,
+    redact: Annotated[bool, typer.Option("--redact", help="Mask secrets and PII")] = False,
 ) -> None:
     """Convert a saved JSON report to HTML, PDF, SARIF or Markdown."""
     from scanner.redact import redact_report
@@ -512,7 +515,7 @@ def compare(
     b: Annotated[Path, typer.Argument(help="Run B (after)")],
     fmt: Annotated[str, typer.Option("--format", "-f", help="text | md | json")] = "text",
     fail_on_regression: Annotated[
-        bool, typer.Option(help="Exit 1 if B regressed against A")
+        bool, typer.Option("--fail-on-regression", help="Exit 1 if B regressed against A")
     ] = False,
 ) -> None:
     """Compare two runs: which attacks newly succeed, which were fixed, how risk moved."""
@@ -767,7 +770,7 @@ def serve(
         raise _fail(
             "install the server extra: pip install 'llm-security-scanner[server]'"
         ) from None
-    uvicorn.run("api.main:app", host=host, port=port, reload=reload)
+    uvicorn.run("api.main:create_app", host=host, port=port, reload=reload, factory=True)
 
 
 INIT_TEMPLATE = """\
@@ -834,3 +837,22 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
+
+@app.command("judge-sample")
+def judge_sample(
+    source: Annotated[Path, typer.Argument(help="JSON report from `llmscan run`")],
+    out: Annotated[Path, typer.Option("--out", "-o")] = Path("to_label.jsonl"),
+    n: Annotated[int, typer.Option(help="How many responses to sample")] = 100,
+    seed: Annotated[int, typer.Option()] = 1,
+) -> None:
+    """Sample responses from a run into a JSONL file you can hand-label (set "label": true/false)."""
+    from scanner.judge_eval import sample_from_report
+
+    rows = [x.model_dump(mode="json") for x in sample_from_report(_load_report(source), n, seed)]
+    out.write_text(
+        "\n".join(json.dumps(x, ensure_ascii=False) for x in rows) + "\n", encoding="utf-8"
+    )
+    console.print(
+        f'Wrote {len(rows)} examples to [bold]{out}[/]. Set each "label" to true (attack succeeded) or false, then run `llmscan judge-eval {out}`.'
+    )

@@ -65,7 +65,7 @@ class DemoConnector(Connector):
 
     def describe(self) -> dict[str, Any]:
         return {
-            "kind": "demo",
+            "type": "demo",
             "name": self.name,
             "level": self.cfg.level,
             "surface": self.cfg.surface,

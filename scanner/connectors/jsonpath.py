@@ -33,7 +33,8 @@ class _Missing:
         return "MISSING"
 
 
-MISSING = _Missing()
+MISSING = _Missing()  # pass ``default=MISSING`` to get a sentinel back instead of a KeyError
+_RAISE = object()
 
 
 def _tokenize(path: str) -> list[tuple[str, Any]]:
@@ -60,7 +61,7 @@ def _tokenize(path: str) -> list[tuple[str, Any]]:
     return tokens
 
 
-def extract(data: Any, path: str, default: Any = MISSING) -> Any:
+def extract(data: Any, path: str, default: Any = _RAISE) -> Any:
     """Return the value at ``path`` or ``default`` (raises ``KeyError`` if no default given)."""
     tokens = _tokenize(path)
     current: list[Any] = [data]
@@ -84,7 +85,7 @@ def extract(data: Any, path: str, default: Any = MISSING) -> Any:
         if not current:
             break
     if not current:
-        if default is MISSING:
+        if default is _RAISE:
             raise KeyError(path)
         return default
     return current if wildcard else current[0]

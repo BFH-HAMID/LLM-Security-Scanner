@@ -8,10 +8,10 @@ import secrets
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import create_engine, delete, func, select, update
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import CursorResult, Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -155,7 +155,7 @@ class Store:
                 .where(ApiKeyRow.id == key_id, ApiKeyRow.project_id == project_id)
                 .values(revoked=True)
             )
-            return bool(res.rowcount)
+            return bool(cast(CursorResult[Any], res).rowcount)
 
     # ------------------------------------------------------------------------ targets
 
@@ -228,6 +228,8 @@ class Store:
         name: str | None = None,
         authorization: dict[str, Any] | None = None,
         status: str = "queued",
+        target_config: dict[str, Any] | None = None,
+        progress_total: int = 0,
     ) -> RunRow:
         with self.session() as s:
             row = RunRow(
@@ -236,6 +238,8 @@ class Store:
                 name=name,
                 scan_config=scan_config,
                 target_summary=target_summary,
+                target_config=target_config,
+                progress_total=progress_total,
                 authorization=authorization,
                 status=status,
                 tool_version=__version__,
@@ -347,6 +351,14 @@ class Store:
                 )
             )
 
+    def finish_cancelled(self, run_id: str) -> None:
+        with self.session() as s:
+            s.execute(
+                update(RunRow)
+                .where(RunRow.id == run_id)
+                .values(status="cancelled", finished_at=utcnow())
+            )
+
     def fail_run(self, run_id: str, error: str) -> None:
         with self.session() as s:
             s.execute(
@@ -433,7 +445,7 @@ class Store:
             return RunReport(
                 id=run.id,
                 name=run.name,
-                status=run.status,  # type: ignore[arg-type]
+                status=run.status,
                 target=run.target_summary or {},
                 config=run.scan_config or {},
                 authorization=run.authorization,
@@ -445,6 +457,31 @@ class Store:
                 error=run.error,
                 tool=ToolInfo(version=run.tool_version),
             )
+
+    def heatmap_rows(self, run_id: str) -> list[tuple[str, str, str, str, str, str]]:
+        """(probe_id, probe_name, category, severity, mutator, status) without loading transcripts."""
+        with self.session() as s:
+            q = select(
+                ResultRow.probe_id,
+                ResultRow.probe_name,
+                ResultRow.category,
+                ResultRow.severity,
+                ResultRow.mutator,
+                ResultRow.status,
+            ).where(ResultRow.run_id == run_id)
+            return [tuple(r) for r in s.execute(q)]  # type: ignore[misc]
+
+    def fail_orphaned_runs(
+        self, reason: str = "the server restarted while this run was in progress"
+    ) -> int:
+        """Runs left 'running'/'queued' by a previous in-process server can never finish."""
+        with self.session() as s:
+            res = s.execute(
+                update(RunRow)
+                .where(RunRow.status.in_(("running", "queued")))
+                .values(status="failed", error=reason, finished_at=utcnow())
+            )
+            return int(cast(CursorResult[Any], res).rowcount or 0)
 
     def purge(self, older_than_days: int) -> int:
         """Delete finished runs older than N days (data-retention helper)."""

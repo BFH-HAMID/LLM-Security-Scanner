@@ -97,7 +97,7 @@ def _radar(report: RunReport) -> Drawing:
         chart.strands[0].fillColor = colors.Color(0.86, 0.15, 0.15, alpha=0.3)
         chart.strands[0].strokeColor = colors.HexColor("#dc2626")
         chart.strandLabels.fontSize = 6
-        chart.labels and setattr(chart.spokeLabels, "fontSize", 7)
+        chart.spokeLabels.fontSize = 7
         d.add(chart)
     return d
 

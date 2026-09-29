@@ -62,7 +62,11 @@ class DetectionPipeline:
                     reason=(
                         "; ".join(d.reason for d in rule_dets if d.matched)
                         if rules_matched
-                        else "no rule matched"
+                        else (
+                            "; ".join(skipped)
+                            if rules_matched is None and skipped
+                            else "no rule matched"
+                        )
                     ),
                     evidence=evidence,
                     meta={

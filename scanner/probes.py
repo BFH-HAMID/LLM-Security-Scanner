@@ -45,10 +45,14 @@ class ContainsRule(_Strict):
     description: str = ""
 
 
+def _default_flags() -> list[Literal["i", "m", "s"]]:
+    return ["i"]
+
+
 class RegexRule(_Strict):
     type: Literal["regex"]
     pattern: str
-    flags: list[Literal["i", "m", "s"]] = Field(default_factory=lambda: ["i"])
+    flags: list[Literal["i", "m", "s"]] = Field(default_factory=_default_flags)
     description: str = ""
 
     @field_validator("pattern")

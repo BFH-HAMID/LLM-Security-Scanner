@@ -87,7 +87,7 @@ class AnthropicConnector(HTTPConnectorBase):
 
     def describe(self) -> dict[str, Any]:
         return {
-            "kind": "anthropic",
+            "type": "anthropic",
             "name": self.name,
             "base_url": self.cfg.base_url,
             "model": self.cfg.model,

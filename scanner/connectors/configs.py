@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -35,6 +36,7 @@ class IngestConfig(_Cfg):
 
 
 class TargetBase(_Cfg):
+    type: str = ""  # narrowed to a Literal by each concrete target class
     name: str = "target"
     description: str = ""
     # Planted secrets: a list, or a mapping of name -> value. Names are used in probe rules.
@@ -167,7 +169,13 @@ def parse_target(data: dict[str, Any] | TargetBase) -> TargetBase:
     data = dict(data)
     t = str(data.get("type", "")).lower()
     data["type"] = _TYPE_ALIASES.get(t, t)
-    return TypeAdapter(TargetConfig).validate_python(data)
+    target: TargetBase = TypeAdapter(TargetConfig).validate_python(data)
+    if "name" not in target.model_fields_set:  # a recognisable label beats "target" in reports
+        label = getattr(target, "model", None) or getattr(target, "url", None)
+        if label:
+            host = urlparse(label).hostname if "://" in label else None
+            target = target.model_copy(update={"name": host or label})
+    return target
 
 
 def canary_variables(canaries: dict[str, str]) -> dict[str, str]:
