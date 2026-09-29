@@ -97,6 +97,14 @@ def _categories(values: list[str] | None) -> list[Category]:
 # ------------------------------------------------------------------------------ summary
 
 
+def _ellipsis(text: str, limit: int) -> str:
+    """Shorten at a word boundary and say so, instead of cutting mid-word."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:. ")
+    return (cut or text[: limit - 1]) + "…"
+
+
 def print_summary(report: RunReport, top: int = 10) -> None:
     s = report.score
     grade_style = GRADE_STYLE.get(s.grade, "white")
@@ -155,8 +163,8 @@ def print_summary(report: RunReport, top: int = 10) -> None:
             t.add_row(
                 f"[{SEV_STYLE[r.severity.value]}]{r.severity.value}[/]",
                 f"{r.probe_id} {r.probe_name}",
-                muts[:38],
-                r.reason[:70],
+                _ellipsis(muts, 38),
+                _ellipsis(r.reason, 110),
             )
             if len(seen) >= top:
                 break

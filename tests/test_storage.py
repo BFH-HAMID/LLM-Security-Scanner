@@ -11,9 +11,15 @@ from scanner.storage import Store, hash_key, normalize_url
 from scanner.storage.models import ResultRow, RunRow, UTCDateTime
 
 
-@pytest.fixture()
-def store(tmp_path):
-    s = Store(str(tmp_path / "t.db"))
+@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=pytest.mark.integration)])
+def store(request, tmp_path):
+    """Every storage test runs on SQLite and, when one is available, on a real PostgreSQL."""
+    url = (
+        str(tmp_path / "t.db")
+        if request.param == "sqlite"
+        else request.getfixturevalue("pg_database")
+    )
+    s = Store(url)
     yield s
     s.close()
 

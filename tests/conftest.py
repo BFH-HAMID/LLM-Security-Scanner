@@ -77,3 +77,46 @@ def redis_url() -> str:
     yield f"redis://127.0.0.1:{port}/0"
     proc.terminate()
     proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def pg_server_url():
+    """A PostgreSQL server for integration tests.
+
+    Uses ``TEST_POSTGRES_URL`` (CI service container) if set, otherwise a throw-away server from the
+    optional ``pgserver`` package, otherwise skips.
+    """
+    import os
+
+    url = os.environ.get("TEST_POSTGRES_URL")
+    if url:
+        yield url
+        return
+    try:
+        import pgserver  # type: ignore[import-not-found]
+    except ImportError:
+        pytest.skip("no PostgreSQL available (set TEST_POSTGRES_URL or `pip install pgserver`)")
+    import tempfile
+
+    data = Path(tempfile.mkdtemp(prefix="llmscan-pg-"))
+    server = pgserver.get_server(data, cleanup_mode="delete")
+    yield server.get_uri()
+    server.cleanup()
+
+
+@pytest.fixture()
+def pg_database(pg_server_url):
+    """A fresh, empty database per test (dropped afterwards); yields its URL."""
+    import uuid
+
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    admin = make_url(pg_server_url.replace("postgresql://", "postgresql+psycopg://", 1))
+    name = f"llmscan_{uuid.uuid4().hex[:12]}"
+    dsn = admin.set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(f'CREATE DATABASE "{name}"')
+    yield admin.set(database=name, drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
