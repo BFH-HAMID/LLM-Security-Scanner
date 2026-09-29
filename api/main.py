@@ -58,8 +58,10 @@ def create_app(
         title="LLM Security Scanner API",
         version=__version__,
         description="Run LLM security scans and read scored results. Authenticate with the X-API-Key header.",
-        docs_url=f"{API_PREFIX}/docs",
-        openapi_url=f"{API_PREFIX}/openapi.json",
+        # The interactive docs are unauthenticated (they describe the API, not any data);
+        # hardened deployments switch them off with LLMSCAN_DOCS_ENABLED=false.
+        docs_url=f"{API_PREFIX}/docs" if settings.docs_enabled else None,
+        openapi_url=f"{API_PREFIX}/openapi.json" if settings.docs_enabled else None,
         redoc_url=None,
     )
     app.state.settings = settings

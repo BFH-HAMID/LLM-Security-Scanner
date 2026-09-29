@@ -23,6 +23,7 @@ class Settings:
     max_attempts_per_run: int = 20_000
     max_concurrency: int = 16
     allow_demo_target: bool = True
+    docs_enabled: bool = True  # /api/v1/docs and /openapi.json (unauthenticated, schema only)
     target_allowlist: list[str] = field(default_factory=list)  # fnmatch host patterns; empty = any
     block_private_targets: bool = False  # for hosted deployments (SSRF hardening)
     # Environment variables a stored target config may reference as ${NAME}. Empty = none: otherwise
@@ -49,6 +50,7 @@ class Settings:
             max_attempts_per_run=int(os.environ.get("LLMSCAN_MAX_ATTEMPTS", "20000")),
             max_concurrency=int(os.environ.get("LLMSCAN_MAX_CONCURRENCY", "16")),
             allow_demo_target=_bool("LLMSCAN_ALLOW_DEMO_TARGET", True),
+            docs_enabled=_bool("LLMSCAN_DOCS_ENABLED", True),
             target_allowlist=[
                 h.strip()
                 for h in os.environ.get("LLMSCAN_TARGET_ALLOWLIST", "").split(",")

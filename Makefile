@@ -41,7 +41,7 @@ dashboard-install: ## npm ci in dashboard/
 dashboard-build: ## Type-check and build the dashboard
 	cd dashboard && npm run typecheck && npm run build
 
-dashboard-dev: ## Dashboard dev server on :3000 (needs the API on :8000, see docs/ARCHITECTURE.md)
+dashboard-dev: ## Dashboard dev server on :3000 (needs the API on :8000, e.g. `llmscan serve`)
 	cd dashboard && LLMSCAN_API_URL=$${LLMSCAN_API_URL:-http://localhost:8000} npm run dev
 
 # --------------------------------------------------------------------------- docker

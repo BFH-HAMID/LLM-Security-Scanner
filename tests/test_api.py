@@ -563,3 +563,24 @@ async def test_meta_and_probe_endpoints(client):
     assert (await client.get(f"{P}/docs")).status_code == 200 and (
         await client.get(f"{P}/openapi.json")
     ).json()["info"]["title"]
+
+
+async def test_only_health_and_the_schema_are_reachable_without_a_key(tmp_path):
+    """Everything else needs a key; the interactive docs (schema only) can be switched off."""
+    for enabled, expected in ((True, 200), (False, 404)):
+        app = make_app(tmp_path, docs_enabled=enabled)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://api"
+        ) as anon:
+            assert (await anon.get(f"{P}/health")).status_code == 200
+            assert (await anon.get(f"{P}/docs")).status_code == expected
+            assert (await anon.get(f"{P}/openapi.json")).status_code == expected
+            for path in (
+                "/runs",
+                "/targets",
+                "/keys",
+                "/projects",
+                "/compare?a=x&b=y",
+                "/probes/PI-001",
+            ):
+                assert (await anon.get(P + path)).status_code == 401, path
