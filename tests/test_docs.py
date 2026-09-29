@@ -63,11 +63,6 @@ def test_documented_make_targets_exist(doc: Path):
         assert target in targets, f"{doc.name}: `make {target}` is not a Makefile target"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="known gap: these guides are referenced from code comments but not written yet "
-    "(SCORING, PROBES, JUDGE_EVALUATION). Remove this marker when they land.",
-)
 def test_docs_referenced_from_code_exist():
     referenced = set()
     for path in [
