@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import socket
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -51,13 +52,14 @@ def _port_open(host: str, port: int) -> bool:
 
 
 @pytest.fixture(scope="session")
-def redis_url() -> str:
+def redis_url() -> Iterator[str]:
     """URL of a Redis server for integration tests (skips when none is available)."""
     import os
 
     url = os.environ.get("REDIS_URL")
     if url:
-        return url
+        yield url  # a generator fixture: `return url` here would end it without yielding
+        return
     exe = shutil.which("redis-server") or os.environ.get("REDIS_SERVER_BIN")
     if not exe:
         pytest.skip("no Redis available (set REDIS_URL or install redis-server)")

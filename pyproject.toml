@@ -87,6 +87,9 @@ minversion = "8.0"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Test modules import each other as ``tests.*``. `python -m pytest` puts the repo root on sys.path but
+# the plain `pytest` command (CI, `make test`) does not, so say it explicitly.
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: needs external services (Redis / PostgreSQL) — skipped when unavailable",
