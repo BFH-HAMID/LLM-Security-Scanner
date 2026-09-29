@@ -1,0 +1,265 @@
+name: "LLM Security Scan"
+description: >-
+  Attack-test a chat endpoint, RAG app or agent for prompt injection, jailbreaks, prompt and data
+  leakage, unsafe output handling and excessive agency. Scores the result, writes a job summary,
+  uploads SARIF to GitHub code scanning and fails the build on your policy.
+author: "BFH-HAMID"
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  target:
+    description: >-
+      What to scan: a llmscan config file (recommended), or a shorthand such as
+      `demo:hardened`, `ollama:llama3.1`, `openai:gpt-4o-mini@https://host/v1`, `anthropic:MODEL`.
+    required: true
+  categories:
+    description: "Comma-separated categories to run (default: all). e.g. prompt_injection,jailbreak"
+    required: false
+    default: ""
+  probes:
+    description: "Comma-separated probe ids to run (default: all), e.g. PI-001,SP-003"
+    required: false
+    default: ""
+  min-severity:
+    description: "Skip probes below this severity (low | medium | high | critical)"
+    required: false
+    default: ""
+  mutators:
+    description: "Comma-separated mutators to add, e.g. base64,rot13 or `all`"
+    required: false
+    default: ""
+  fail-on:
+    description: "Fail the job if any attack of this severity or worse succeeded (low | medium | high | critical)"
+    required: false
+    default: ""
+  max-risk:
+    description: "Fail the job if the 0-100 risk score is above this value"
+    required: false
+    default: ""
+  baseline:
+    description: "Path to a committed baseline file (`llmscan baseline save`); enables regression detection"
+    required: false
+    default: ""
+  fail-on-regression:
+    description: "Fail the job if the run is worse than the baseline"
+    required: false
+    default: "false"
+  regression-tolerance:
+    description: "Allowed risk-score increase over the baseline before it counts as a regression"
+    required: false
+    default: "5"
+  seed:
+    description: "Seed for reproducible nonces and mutator choices"
+    required: false
+    default: ""
+  judge:
+    description: "auto | heuristic | off | ollama:MODEL | openai:MODEL | anthropic:MODEL"
+    required: false
+    default: ""
+  rps:
+    description: "Maximum requests per second sent to the target"
+    required: false
+    default: ""
+  concurrency:
+    description: "Parallel attacks"
+    required: false
+    default: ""
+  i-am-authorized:
+    description: >-
+      Set to `true` to confirm you own the target or are authorised to test it. Required for public
+      hosts. See docs/ETHICS.md.
+    required: false
+    default: "false"
+  extra-args:
+    description: "Additional arguments passed verbatim (whitespace-split) to `llmscan run`"
+    required: false
+    default: ""
+  upload-sarif:
+    description: "Upload the SARIF report to GitHub code scanning (needs `security-events: write`)"
+    required: false
+    default: "true"
+  sarif-category:
+    description: "Code-scanning category, so several scans in one repository stay separate"
+    required: false
+    default: "llmscan"
+  upload-artifact:
+    description: "Attach the JSON/HTML/SARIF/Markdown reports to the workflow run"
+    required: false
+    default: "true"
+  artifact-name:
+    description: "Name of the uploaded report artifact"
+    required: false
+    default: "llmscan-reports"
+  report-dir:
+    description: "Directory the reports are written to"
+    required: false
+    default: "llmscan-reports"
+  python-version:
+    description: "Python version used to run llmscan"
+    required: false
+    default: "3.11"
+  working-directory:
+    description: "Directory to run in (where the config file and baseline live)"
+    required: false
+    default: "."
+
+outputs:
+  risk-score:
+    description: "Risk score, 0-100 (lower is better)"
+    value: ${{ steps.scan.outputs.risk-score }}
+  grade:
+    description: "Letter grade A-F"
+    value: ${{ steps.scan.outputs.grade }}
+  findings:
+    description: "Number of attacks that succeeded"
+    value: ${{ steps.scan.outputs.findings }}
+  exit-code:
+    description: "llmscan exit code: 0 ok, 1 policy failure, 2 configuration error, 3 run failed"
+    value: ${{ steps.scan.outputs.exit-code }}
+  report-dir:
+    description: "Directory containing llmscan.json, .html, .sarif and .md"
+    value: ${{ steps.scan.outputs.report-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install llmscan
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python -m pip install --disable-pip-version-check --quiet "$ACTION_PATH"
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_CATEGORIES: ${{ inputs.categories }}
+        INPUT_PROBES: ${{ inputs.probes }}
+        INPUT_MIN_SEVERITY: ${{ inputs.min-severity }}
+        INPUT_MUTATORS: ${{ inputs.mutators }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_MAX_RISK: ${{ inputs.max-risk }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_FAIL_ON_REGRESSION: ${{ inputs.fail-on-regression }}
+        INPUT_REGRESSION_TOLERANCE: ${{ inputs.regression-tolerance }}
+        INPUT_SEED: ${{ inputs.seed }}
+        INPUT_JUDGE: ${{ inputs.judge }}
+        INPUT_RPS: ${{ inputs.rps }}
+        INPUT_CONCURRENCY: ${{ inputs.concurrency }}
+        INPUT_AUTHORIZED: ${{ inputs.i-am-authorized }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: |
+        # Inputs arrive as environment variables only, never interpolated into this script.
+        set -u
+        mkdir -p "$REPORT_DIR"
+        args=(run "$INPUT_TARGET" --no-save
+          -o "$REPORT_DIR/llmscan.json" -o "$REPORT_DIR/llmscan.html"
+          -o "$REPORT_DIR/llmscan.sarif" -o "$REPORT_DIR/llmscan.md")
+
+        csv() {  # csv FLAG "a, b,c"  ->  FLAG a FLAG b FLAG c
+          local flag="$1" item
+          local -a items=()
+          IFS=',' read -r -a items <<< "$2"
+          for item in "${items[@]}"; do
+            item="${item//[[:space:]]/}"
+            [ -n "$item" ] && args+=("$flag" "$item")
+          done
+          return 0
+        }
+        csv --category "$INPUT_CATEGORIES"
+        csv --probe "$INPUT_PROBES"
+        csv --mutator "$INPUT_MUTATORS"
+        [ -n "$INPUT_MIN_SEVERITY" ] && args+=(--min-severity "$INPUT_MIN_SEVERITY")
+        [ -n "$INPUT_FAIL_ON" ] && args+=(--fail-on "$INPUT_FAIL_ON")
+        [ -n "$INPUT_MAX_RISK" ] && args+=(--max-risk "$INPUT_MAX_RISK")
+        [ -n "$INPUT_SEED" ] && args+=(--seed "$INPUT_SEED")
+        [ -n "$INPUT_JUDGE" ] && args+=(--judge "$INPUT_JUDGE")
+        [ -n "$INPUT_RPS" ] && args+=(--rps "$INPUT_RPS")
+        [ -n "$INPUT_CONCURRENCY" ] && args+=(--concurrency "$INPUT_CONCURRENCY")
+        if [ -n "$INPUT_BASELINE" ]; then
+          args+=(--baseline "$INPUT_BASELINE" --regression-tolerance "$INPUT_REGRESSION_TOLERANCE")
+          [ "$INPUT_FAIL_ON_REGRESSION" = "true" ] && args+=(--fail-on-regression)
+        fi
+        [ "$INPUT_AUTHORIZED" = "true" ] && args+=(--i-am-authorized)
+        if [ -n "$INPUT_EXTRA_ARGS" ]; then
+          read -r -a extra <<< "$INPUT_EXTRA_ARGS"
+          args+=("${extra[@]}")
+        fi
+
+        # Do not fail here: SARIF, artifacts and the summary must still be published first.
+        llmscan "${args[@]}"
+        code=$?
+
+        {
+          echo "exit-code=$code"
+          echo "report-dir=$REPORT_DIR"
+          if [ -f "$REPORT_DIR/llmscan.sarif" ]; then echo "sarif-exists=true"; else echo "sarif-exists=false"; fi
+        } >> "$GITHUB_OUTPUT"
+
+        python - "$REPORT_DIR/llmscan.json" >> "$GITHUB_OUTPUT" <<'PY'
+        import json
+        import sys
+
+        try:
+            with open(sys.argv[1], encoding="utf-8") as fh:
+                score = json.load(fh)["score"]
+        except OSError:
+            sys.exit(0)  # the run failed before a report existed
+        print(f"risk-score={score['risk_score']:.1f}")
+        print(f"grade={score['grade']}")
+        print(f"findings={score['failed']}")
+        PY
+
+    - name: Job summary
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: |
+        if [ -f "$REPORT_DIR/llmscan.md" ]; then
+          # GitHub caps a step summary at 1 MiB.
+          head -c 900000 "$REPORT_DIR/llmscan.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-exists == 'true'
+      uses: github/codeql-action/upload-sarif@v4
+      # Private repositories without GitHub Advanced Security cannot accept SARIF; do not turn that
+      # into a red build. The report is still attached as an artifact below.
+      continue-on-error: true
+      with:
+        sarif_file: ${{ inputs.working-directory }}/${{ inputs.report-dir }}/llmscan.sarif
+        category: ${{ inputs.sarif-category }}
+
+    - name: Upload reports
+      if: always() && inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.working-directory }}/${{ inputs.report-dir }}
+        if-no-files-found: ignore
+
+    - name: Enforce policy
+      if: always() && steps.scan.outputs.exit-code != '' && steps.scan.outputs.exit-code != '0'
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        case "$EXIT_CODE" in
+          1) echo "::error title=llmscan policy failed::A --fail-on / --max-risk / regression gate was tripped. See the job summary." ;;
+          2) echo "::error title=llmscan configuration error::The scan did not start; see the log above." ;;
+          *) echo "::error title=llmscan run failed::The scan could not complete (exit code $EXIT_CODE)." ;;
+        esac
+        exit "$EXIT_CODE"

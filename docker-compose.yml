@@ -1,0 +1,175 @@
+# llmscan: the whole stack in one command.
+#
+#   make env                       # generates .env with fresh secrets (or copy .env.example yourself)
+#   docker compose up -d --build   # dashboard on http://localhost:3000
+#
+# Optional local model (Ollama as target + judge):   docker compose --profile ollama up -d
+#
+# Everything is published on 127.0.0.1 only. The demo target is deliberately vulnerable and the
+# dashboard can start scans: put an authenticating proxy in front before you change BIND_ADDR.
+
+name: llmscan
+
+x-api-build: &api-build
+  context: .
+  dockerfile: docker/api.Dockerfile
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql://llmscan:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (run `make env`)}@postgres:5432/llmscan
+  LLMSCAN_QUEUE: celery
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  LLMSCAN_BOOTSTRAP_API_KEY: ${LLMSCAN_API_KEY:?set LLMSCAN_API_KEY in .env (run `make env`)}
+  LLMSCAN_ALLOW_DEMO_TARGET: "true"
+  LLMSCAN_MAX_CONCURRENCY: ${LLMSCAN_MAX_CONCURRENCY:-8}
+  LLMSCAN_TARGET_ALLOWLIST: ${LLMSCAN_TARGET_ALLOWLIST:-}
+  # Stored target configs may only reference the variables named here (default: none).
+  LLMSCAN_ENV_ALLOWLIST: ${LLMSCAN_ENV_ALLOWLIST:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: llmscan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (run `make env`)}
+      POSTGRES_DB: llmscan
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmscan -d llmscan"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # A job broker, not a datastore: runs interrupted by a restart are marked failed on API start.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: *api-build
+    image: llmscan-api:local
+    restart: unless-stopped
+    environment: *api-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${API_PORT:-8000}:8000"
+
+  worker:
+    build: *api-build
+    image: llmscan-api:local
+    restart: unless-stopped
+    command: ["celery", "-A", "api.jobs.celery_app", "worker", "--loglevel=INFO", "--concurrency=${WORKER_CONCURRENCY:-2}"]
+    environment: *api-env
+    depends_on:
+      api: { condition: service_healthy } # the API creates the tables first
+      redis: { condition: service_healthy }
+    healthcheck:
+      # The image's own healthcheck probes the API port, which a worker does not serve.
+      test: ["CMD-SHELL", "celery -A api.jobs.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  target:
+    # A deliberately vulnerable chatbot / RAG app / agent to practise on. Never expose it.
+    build: *api-build
+    image: llmscan-api:local
+    restart: unless-stopped
+    command: ["uvicorn", "targets.vulnerable_app.main:app", "--host", "0.0.0.0", "--port", "9000"]
+    environment:
+      TARGET_LEVEL: weak
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${TARGET_PORT:-9000}:9000"
+
+  dashboard:
+    build:
+      context: ./dashboard
+    image: llmscan-dashboard:local
+    restart: unless-stopped
+    environment:
+      LLMSCAN_API_URL: http://api:8000
+      LLMSCAN_API_KEY: ${LLMSCAN_API_KEY:?set LLMSCAN_API_KEY in .env (run `make env`)}
+      DASHBOARD_USER: ${DASHBOARD_USER:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${DASHBOARD_PORT:-3000}:3000"
+
+  # ------------------------------------------------------------------ profile: ollama
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # NVIDIA GPU: uncomment (needs the NVIDIA container toolkit on the host).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:11434:11434"
+
+  ollama-pull:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c", 'ollama pull "$$OLLAMA_MODEL"']
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    depends_on:
+      ollama: { condition: service_healthy }
+
+  target-ollama:
+    # The same vulnerable app, but answering with a real local model instead of the built-in
+    # simulator: a weak system prompt with a planted canary, as in the design doc.
+    profiles: ["ollama"]
+    build: *api-build
+    image: llmscan-api:local
+    restart: unless-stopped
+    command: ["uvicorn", "targets.vulnerable_app.main:app", "--host", "0.0.0.0", "--port", "9001"]
+    environment:
+      TARGET_LEVEL: weak
+      TARGET_BACKEND: ollama
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    depends_on:
+      ollama-pull: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9001/', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:9001:9001"
+
+volumes:
+  pgdata:
+  ollama:

@@ -1,0 +1,34 @@
+# Gate pull requests on an LLM security scan. Copy to .github/workflows/llm-security.yml
+#
+# 1. Commit a llmscan config for a STAGING copy of your app (never point CI at production).
+# 2. Run `llmscan run llmscan.yaml --seed 1 -o report.json` once on a known-good build, then
+#    `llmscan baseline save report.json` and commit .llmscan/baseline.json.
+# 3. From then on, a PR that makes any attack newly succeed fails the check.
+name: LLM security scan
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # weekly, to catch model or prompt drift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # upload SARIF to code scanning
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: BFH-HAMID/LLM-Security-Scanner@main # pin to a release tag or commit SHA in real use
+        env:
+          CHATBOT_TOKEN: ${{ secrets.STAGING_CHATBOT_TOKEN }}
+        with:
+          target: llmscan.yaml
+          seed: "1"
+          mutators: base64,roleplay
+          baseline: .llmscan/baseline.json
+          fail-on-regression: "true"
+          fail-on: critical
+          i-am-authorized: "true" # you own the staging deployment

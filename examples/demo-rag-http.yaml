@@ -1,0 +1,26 @@
+# The demo app's RAG surface. `ingest` lets the indirect-injection probes plant a poisoned document
+# in the knowledge base, ask an ordinary question, and (afterwards) delete the document again.
+#
+#   llmscan demo-target --port 9000
+#   llmscan run examples/demo-rag-http.yaml -c indirect_injection
+target:
+  type: http
+  name: demo-rag-over-http
+  url: ${DEMO_URL:-http://localhost:9000}/weak/rag/chat
+  body:
+    message: "{{prompt}}"
+    conversation_id: "{{conversation_id}}"
+  response_path: $.reply
+  ingest:
+    url: ${DEMO_URL:-http://localhost:9000}/weak/rag/ingest
+    body:
+      title: "{{title}}"
+      content: "{{content}}"
+    id_path: $.id
+    delete_url: ${DEMO_URL:-http://localhost:9000}/weak/rag/documents/{{document_id}}
+  canaries:
+    system: CANARY-7f3a9c1e-ACME
+    rag: RAGCANARY-51b2e7d0
+scan:
+  seed: 1
+  categories: [indirect_injection, sensitive_data_leakage]
